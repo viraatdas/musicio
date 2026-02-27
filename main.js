@@ -9,20 +9,93 @@ const {
 } = require('electron');
 const path = require('path');
 const fs = require('fs');
+const { ElectronBlocker } = require('@ghostery/adblocker-electron');
+const { Request: AdblockerRequest } = require('@ghostery/adblocker');
+const fetch = require('cross-fetch');
 
 let mainWindow;
 
 // ============================================
 // Minimal UA cleanup - MUST be before app.whenReady()
 // ============================================
-// Instead of replacing the entire UA (which creates detectable inconsistencies),
-// just strip "Electron/x.x.x" and the app name from the default UA.
-// This preserves the real Chromium version and other natural fingerprints.
 const CLEAN_UA = app.userAgentFallback
   .replace(/\s*Electron\/[\d.]+/, '')
   .replace(/\s*musicio\/[\d.]+/i, '');
 
 app.userAgentFallback = CLEAN_UA;
+
+// ============================================
+// Widevine CDM detection (for Spotify DRM playback)
+// ============================================
+// Tries to find Chrome's Widevine CDM on the system.
+// If Chrome is installed, Spotify playback will work.
+
+function findWidevineCDM() {
+  const chromePaths = [
+    '/Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/Current/Libraries/WidevineCdm',
+    '/Applications/Google Chrome Canary.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/Current/Libraries/WidevineCdm',
+    '/Applications/Chromium.app/Contents/Frameworks/Chromium Framework.framework/Versions/Current/Libraries/WidevineCdm',
+    '/Applications/Brave Browser.app/Contents/Frameworks/Brave Browser Framework.framework/Versions/Current/Libraries/WidevineCdm',
+    '/Applications/Microsoft Edge.app/Contents/Frameworks/Microsoft Edge Framework.framework/Versions/Current/Libraries/WidevineCdm',
+    '/Applications/Vivaldi.app/Contents/Frameworks/Vivaldi Framework.framework/Versions/Current/Libraries/WidevineCdm',
+  ];
+
+  for (const cdmPath of chromePaths) {
+    const manifestPath = path.join(cdmPath, 'manifest.json');
+    if (fs.existsSync(manifestPath)) {
+      try {
+        const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf-8'));
+        return { path: cdmPath, version: manifest.version };
+      } catch { /* skip */ }
+    }
+  }
+  return null;
+}
+
+const widevine = findWidevineCDM();
+if (widevine) {
+  app.commandLine.appendSwitch('widevine-cdm-path', widevine.path);
+  app.commandLine.appendSwitch('widevine-cdm-version', widevine.version);
+  console.log(`Loaded Widevine CDM v${widevine.version} from: ${widevine.path}`);
+} else {
+  console.log('No Widevine CDM found. Spotify playback may not work. Install Chrome/Brave/Edge to enable DRM.');
+}
+
+// ============================================
+// Ad blocker setup
+// ============================================
+
+let _blocker = null;
+
+async function getBlocker() {
+  if (!_blocker) {
+    _blocker = await ElectronBlocker.fromPrebuiltAdsAndTracking(fetch);
+  }
+  return _blocker;
+}
+
+async function setupAdBlocker(ses) {
+  try {
+    const blocker = await getBlocker();
+    // Use webRequest-based blocking (compatible with all Electron versions)
+    ses.webRequest.onBeforeRequest((details, callback) => {
+      const request = AdblockerRequest.fromRawDetails({
+        type: details.resourceType || 'other',
+        url: details.url,
+        sourceUrl: details.referrer || details.url,
+      });
+      const { match } = blocker.match(request);
+      callback({ cancel: match });
+    });
+    console.log('Ad blocker enabled for session');
+  } catch (err) {
+    console.error('Failed to enable ad blocker:', err.message);
+  }
+}
+
+// ============================================
+// Window creation
+// ============================================
 
 function createWindow() {
   mainWindow = new BrowserWindow({
@@ -52,6 +125,8 @@ function createWindow() {
       const allowed = ['media', 'mediaKeySystem', 'notifications', 'fullscreen', 'pointerLock'];
       callback(allowed.includes(permission));
     });
+    // Enable ad blocking on each webview session
+    setupAdBlocker(ses);
   }
 }
 
@@ -62,14 +137,12 @@ function createWindow() {
 app.on('web-contents-created', (_event, contents) => {
   if (contents.getType() === 'webview') {
     contents.setWindowOpenHandler(({ url }) => {
-      // Allow Spotify auth popups
       if (
         url.startsWith('https://accounts.spotify.com') ||
         url.startsWith('https://open.spotify.com')
       ) {
         return { action: 'allow' };
       }
-      // Google auth - allow in webview (don't redirect to external browser)
       if (
         url.startsWith('https://accounts.google.com') ||
         url.startsWith('https://myaccount.google.com')
@@ -156,7 +229,6 @@ ipcMain.handle('import-cookies', async (_event, { partition, cookies }) => {
 
   for (const cookie of cookies) {
     try {
-      // Build the URL from the cookie domain
       const domain = cookie.domain.startsWith('.') ? cookie.domain.slice(1) : cookie.domain;
       const protocol = cookie.secure ? 'https' : 'http';
       const url = `${protocol}://${domain}${cookie.path || '/'}`;
@@ -200,59 +272,63 @@ function registerMediaKeys() {
 }
 
 // ============================================
-// App lifecycle
-// ============================================
-
-// ============================================
 // Auto-import pending cookies on startup
 // ============================================
 
 async function importPendingCookies() {
-  const cookieFile = path.join(__dirname, '.pending-cookies.json');
-  if (!fs.existsSync(cookieFile)) return;
+  // Check both __dirname (dev) and userData (installed app)
+  const locations = [
+    path.join(__dirname, '.pending-cookies.json'),
+    path.join(app.getPath('userData'), '.pending-cookies.json'),
+  ];
 
-  try {
-    const raw = fs.readFileSync(cookieFile, 'utf-8');
-    const cookies = JSON.parse(raw);
-    const ses = session.fromPartition('persist:youtube');
-    let imported = 0;
+  for (const cookieFile of locations) {
+    if (!fs.existsSync(cookieFile)) continue;
 
-    for (const cookie of cookies) {
-      try {
-        const domain = cookie.domain.startsWith('.') ? cookie.domain.slice(1) : cookie.domain;
-        const protocol = cookie.secure ? 'https' : 'http';
-        const url = `${protocol}://${domain}${cookie.path || '/'}`;
+    try {
+      const raw = fs.readFileSync(cookieFile, 'utf-8');
+      const cookies = JSON.parse(raw);
+      const ses = session.fromPartition('persist:youtube');
+      let imported = 0;
 
-        const details = {
-          url,
-          name: cookie.name,
-          value: cookie.value,
-          domain: cookie.domain,
-          path: cookie.path || '/',
-        };
-        if (cookie.secure !== undefined) details.secure = cookie.secure;
-        if (cookie.httpOnly !== undefined) details.httpOnly = cookie.httpOnly;
-        if (cookie.expirationDate && cookie.expirationDate > 0) {
-          details.expirationDate = cookie.expirationDate;
+      for (const cookie of cookies) {
+        try {
+          const domain = cookie.domain.startsWith('.') ? cookie.domain.slice(1) : cookie.domain;
+          const protocol = cookie.secure ? 'https' : 'http';
+          const url = `${protocol}://${domain}${cookie.path || '/'}`;
+
+          const details = {
+            url,
+            name: cookie.name,
+            value: cookie.value,
+            domain: cookie.domain,
+            path: cookie.path || '/',
+          };
+          if (cookie.secure !== undefined) details.secure = cookie.secure;
+          if (cookie.httpOnly !== undefined) details.httpOnly = cookie.httpOnly;
+          if (cookie.expirationDate && cookie.expirationDate > 0) {
+            details.expirationDate = cookie.expirationDate;
+          }
+          if (cookie.sameSite) details.sameSite = cookie.sameSite;
+
+          await ses.cookies.set(details);
+          imported++;
+        } catch (err) {
+          console.error(`Cookie import failed for ${cookie.name}: ${err.message}`);
         }
-        if (cookie.sameSite) {
-          details.sameSite = cookie.sameSite;
-        }
-
-        await ses.cookies.set(details);
-        imported++;
-      } catch (err) {
-        console.error(`Cookie import failed for ${cookie.name}: ${err.message}`);
       }
-    }
 
-    console.log(`Imported ${imported}/${cookies.length} YouTube cookies`);
-    // Delete the file after import
-    fs.unlinkSync(cookieFile);
-  } catch (err) {
-    console.error('Failed to import pending cookies:', err.message);
+      console.log(`Imported ${imported}/${cookies.length} YouTube cookies from ${cookieFile}`);
+      fs.unlinkSync(cookieFile);
+    } catch (err) {
+      console.error('Failed to import pending cookies:', err.message);
+    }
   }
 }
+
+// ============================================
+// App lifecycle
+// ============================================
 
 app.whenReady().then(async () => {
   buildAppMenu();

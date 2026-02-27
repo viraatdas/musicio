@@ -28,7 +28,9 @@
       "target": [
         {
           "target": "dmg",
-          "arch": ["universal"]
+          "arch": [
+            "universal"
+          ]
         }
       ]
     },
@@ -36,13 +38,25 @@
       "title": "Musicio",
       "backgroundColor": "#0a0a0f",
       "contents": [
-        { "x": 130, "y": 220 },
-        { "x": 410, "y": 220, "type": "link", "path": "/Applications" }
+        {
+          "x": 130,
+          "y": 220
+        },
+        {
+          "x": 410,
+          "y": 220,
+          "type": "link",
+          "path": "/Applications"
+        }
       ]
     }
   },
   "devDependencies": {
     "electron": "^33.0.0",
     "electron-builder": "^25.1.8"
+  },
+  "dependencies": {
+    "@ghostery/adblocker-electron": "^2.14.1",
+    "cross-fetch": "^4.1.0"
   }
 }
