@@ -10,8 +10,39 @@ const path = require('path');
 
 let mainWindow;
 
+const CHROME_VERSION = '131';
 const CHROME_USER_AGENT =
-  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
+  `Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${CHROME_VERSION}.0.0.0 Safari/537.36`;
+const CHROME_SEC_CH_UA =
+  `"Google Chrome";v="${CHROME_VERSION}", "Chromium";v="${CHROME_VERSION}", "Not_A Brand";v="24"`;
+
+// ============================================
+// Client Hints header spoofing
+// ============================================
+// Google detects Electron via Sec-CH-UA headers.
+// We override these on all requests from the YouTube session.
+
+function spoofClientHints(ses) {
+  ses.webRequest.onBeforeSendHeaders((details, callback) => {
+    const headers = { ...details.requestHeaders };
+
+    // Replace any Client Hints that reveal Electron
+    headers['Sec-CH-UA'] = CHROME_SEC_CH_UA;
+    headers['Sec-CH-UA-Mobile'] = '?0';
+    headers['Sec-CH-UA-Platform'] = '"macOS"';
+
+    // Remove the full version list if present (it may contain Electron)
+    if (headers['Sec-CH-UA-Full-Version-List']) {
+      headers['Sec-CH-UA-Full-Version-List'] =
+        `"Google Chrome";v="${CHROME_VERSION}.0.0.0", "Chromium";v="${CHROME_VERSION}.0.0.0", "Not_A Brand";v="24.0.0.0"`;
+    }
+
+    // Ensure User-Agent is always the Chrome one
+    headers['User-Agent'] = CHROME_USER_AGENT;
+
+    callback({ requestHeaders: headers });
+  });
+}
 
 function createWindow() {
   mainWindow = new BrowserWindow({
@@ -33,11 +64,14 @@ function createWindow() {
 
   mainWindow.loadFile(path.join(__dirname, 'renderer', 'index.html'));
 
-  // Spoof user-agent on persistent sessions so web players load properly
+  // Configure persistent sessions for each service
   const partitions = ['persist:spotify', 'persist:youtube'];
   for (const partition of partitions) {
     const ses = session.fromPartition(partition);
     ses.setUserAgent(CHROME_USER_AGENT);
+
+    // Spoof Client Hints so Google doesn't detect Electron
+    spoofClientHints(ses);
 
     // Allow DRM content (Widevine)
     ses.setPermissionRequestHandler((_webContents, permission, callback) => {
@@ -104,9 +138,9 @@ function buildAppMenu() {
           click: () => sendToRenderer('switch-tab', 'youtube'),
         },
         {
-          label: 'My Playlists',
+          label: 'Daily Blend',
           accelerator: 'CmdOrCtrl+3',
-          click: () => sendToRenderer('switch-tab', 'playlists'),
+          click: () => sendToRenderer('switch-tab', 'blend'),
         },
         { type: 'separator' },
         { role: 'reload' },
@@ -151,38 +185,31 @@ function openAuthWindow(url, partitionName) {
     backgroundColor: '#fff',
     webPreferences: {
       session: ses,
+      preload: path.join(__dirname, 'preload-auth.js'),
       nodeIntegration: false,
-      contextIsolation: true,
+      contextIsolation: false, // needed so preload patches land on the real window
+      sandbox: false,
     },
   });
 
   authWin.loadURL(url, { userAgent: CHROME_USER_AGENT });
 
   // Close the auth window when user finishes sign-in and is redirected back
-  authWin.webContents.on('will-navigate', (_event, navUrl) => {
+  const checkRedirect = (_event, navUrl) => {
     if (
       navUrl.startsWith('https://music.youtube.com') ||
       navUrl.startsWith('https://www.youtube.com')
     ) {
-      // Small delay to let cookies settle
       setTimeout(() => {
         if (!authWin.isDestroyed()) authWin.close();
         sendToRenderer('reload-webview', 'youtube');
-      }, 500);
+      }, 800);
     }
-  });
+  };
 
-  authWin.webContents.on('will-redirect', (_event, navUrl) => {
-    if (
-      navUrl.startsWith('https://music.youtube.com') ||
-      navUrl.startsWith('https://www.youtube.com')
-    ) {
-      setTimeout(() => {
-        if (!authWin.isDestroyed()) authWin.close();
-        sendToRenderer('reload-webview', 'youtube');
-      }, 500);
-    }
-  });
+  authWin.webContents.on('will-navigate', checkRedirect);
+  authWin.webContents.on('will-redirect', checkRedirect);
+  authWin.webContents.on('did-redirect-navigation', checkRedirect);
 }
 
 // Intercept Google sign-in navigations from webviews
@@ -204,7 +231,6 @@ app.on('web-contents-created', (_event, contents) => {
         openAuthWindow(url, 'persist:youtube');
         return { action: 'deny' };
       }
-      // Allow Spotify OAuth popups
       if (
         url.startsWith('https://accounts.spotify.com') ||
         url.startsWith('https://open.spotify.com')

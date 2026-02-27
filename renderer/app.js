@@ -11,8 +11,8 @@ const SERVICES = {
     webviewId: 'webview-youtube',
     allowedOrigins: ['https://music.youtube.com', 'https://accounts.google.com', 'https://www.youtube.com'],
   },
-  playlists: {
-    viewId: 'playlists-view',
+  blend: {
+    viewId: 'blend-view',
   },
 };
 
@@ -30,7 +30,7 @@ const webviews = {
   spotify: document.getElementById('webview-spotify'),
   youtube: document.getElementById('webview-youtube'),
 };
-const playlistsView = document.getElementById('playlists-view');
+const blendView = document.getElementById('blend-view');
 
 // ============================================
 // Platform Detection & Webview Preload
@@ -40,7 +40,6 @@ if (window.electronAPI?.platform === 'darwin') {
   document.body.classList.add('platform-darwin');
 }
 
-// Set preload path on webviews (must be absolute file:// URL)
 const preloadPath = window.electronAPI?.webviewPreloadPath;
 if (preloadPath) {
   for (const wv of Object.values(webviews)) {
@@ -65,21 +64,18 @@ function switchService(service) {
   activeService = service;
   localStorage.setItem('musicio-active', service);
 
-  // Update webview visibility
   for (const [key, wv] of Object.entries(webviews)) {
     wv.classList.toggle('active', key === service);
   }
+  blendView.classList.toggle('active', service === 'blend');
 
-  // Update playlists view
-  playlistsView.classList.toggle('active', service === 'playlists');
-
-  // Update sidebar buttons
   sidebarBtns.forEach((btn) => {
     btn.classList.toggle('active', btn.dataset.service === service);
   });
 
-  // Update sidebar indicator position
   updateIndicator(service);
+
+  if (service === 'blend') renderBlend();
 }
 
 function updateIndicator(service) {
@@ -88,21 +84,18 @@ function updateIndicator(service) {
 
   const sidebarTop = btn.parentElement.getBoundingClientRect().top;
   const btnTop = btn.getBoundingClientRect().top;
-  const offset = btnTop - sidebarTop;
-
-  sidebarIndicator.style.top = `${offset}px`;
+  sidebarIndicator.style.top = `${btnTop - sidebarTop}px`;
 
   const colors = {
     spotify: { bg: 'var(--neon-cyan)', shadow: 'var(--glow-cyan)' },
     youtube: { bg: 'var(--neon-magenta)', shadow: 'var(--glow-magenta)' },
-    playlists: { bg: 'var(--neon-purple)', shadow: 'var(--glow-purple)' },
+    blend: { bg: 'var(--neon-purple)', shadow: 'var(--glow-purple)' },
   };
   const c = colors[service] || colors.spotify;
   sidebarIndicator.style.background = c.bg;
   sidebarIndicator.style.boxShadow = c.shadow;
 }
 
-// Sidebar click handlers
 sidebarBtns.forEach((btn) => {
   btn.addEventListener('click', () => switchService(btn.dataset.service));
 });
@@ -111,17 +104,14 @@ sidebarBtns.forEach((btn) => {
 // IPC: Tab switching from Menu accelerators
 // ============================================
 
-window.electronAPI?.onSwitchTab((tab) => {
-  switchService(tab);
-});
+window.electronAPI?.onSwitchTab((tab) => switchService(tab));
 
 // ============================================
 // IPC: Reload webview after auth
 // ============================================
 
 window.electronAPI?.onReloadWebview((service) => {
-  const wv = webviews[service];
-  if (wv) wv.reload();
+  webviews[service]?.reload();
 });
 
 // ============================================
@@ -133,29 +123,22 @@ const totalWebviews = Object.keys(webviews).length;
 
 function onWebviewReady() {
   webviewsReady++;
-  if (webviewsReady >= totalWebviews) {
-    showApp();
-  }
+  if (webviewsReady >= totalWebviews) showApp();
 }
 
 function showApp() {
   loadingScreen.classList.add('hidden');
   app.classList.add('visible');
   switchService(activeService);
-  renderPlaylists();
 }
 
-// Listen for webview load events
 for (const wv of Object.values(webviews)) {
   wv.addEventListener('did-finish-load', onWebviewReady);
   wv.addEventListener('did-fail-load', onWebviewReady);
 }
 
-// Fallback: show app after timeout
 setTimeout(() => {
-  if (!app.classList.contains('visible')) {
-    showApp();
-  }
+  if (!app.classList.contains('visible')) showApp();
 }, 8000);
 
 // ============================================
@@ -166,14 +149,11 @@ for (const [service, config] of Object.entries(SERVICES)) {
   if (!config.allowedOrigins) continue;
   const wv = webviews[service];
   if (!wv) continue;
-
   wv.addEventListener('will-navigate', (e) => {
     try {
       const allowed = config.allowedOrigins.some((origin) => e.url.startsWith(origin));
-      if (!allowed) {
-        e.preventDefault();
-      }
-    } catch (_) { /* ignore invalid URLs */ }
+      if (!allowed) e.preventDefault();
+    } catch (_) {}
   });
 }
 
@@ -190,236 +170,251 @@ const MEDIA_KEY_MAP = {
 window.electronAPI?.onMediaKey((key) => {
   const script = MEDIA_KEY_MAP[key];
   if (!script) return;
-
   const wv = webviews[activeService];
-  if (wv) {
-    wv.executeJavaScript(script).catch(() => {});
-  }
+  if (wv) wv.executeJavaScript(script).catch(() => {});
 });
 
 // ============================================
-// Playlists Feature
+// Daily Blend
 // ============================================
 
-const STORAGE_KEY = 'musicio-playlists';
+const BLEND_KEY = 'musicio-blend';
 
-function loadPlaylists() {
-  try {
-    return JSON.parse(localStorage.getItem(STORAGE_KEY)) || [];
-  } catch {
-    return [];
-  }
+function todayKey() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 
-function savePlaylists(playlists) {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(playlists));
+function loadBlend() {
+  try {
+    const data = JSON.parse(localStorage.getItem(BLEND_KEY)) || {};
+    return data;
+  } catch { return {}; }
+}
+
+function saveBlend(data) {
+  localStorage.setItem(BLEND_KEY, JSON.stringify(data));
+}
+
+function getBlendSongs() {
+  const data = loadBlend();
+  return data.songs || [];
 }
 
 function generateId() {
   return Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
 }
 
-// Modal logic
-const modal = document.getElementById('playlist-modal');
-const modalTitle = document.getElementById('modal-title');
-const modalBodyCreate = document.getElementById('modal-body-create');
-const modalBodyAddSong = document.getElementById('modal-body-add-song');
-const inputPlaylistName = document.getElementById('input-playlist-name');
-const inputSongTitle = document.getElementById('input-song-title');
-const inputSongArtist = document.getElementById('input-song-artist');
-const inputSongUrl = document.getElementById('input-song-url');
-const sourceBtns = document.querySelectorAll('.source-btn');
-
-let currentPlaylistId = null;
-let currentSource = 'spotify';
-
-function openCreateModal() {
-  modalTitle.textContent = 'NEW PLAYLIST';
-  modalBodyCreate.classList.remove('hidden');
-  modalBodyAddSong.classList.add('hidden');
-  inputPlaylistName.value = '';
-  modal.classList.remove('hidden');
-  inputPlaylistName.focus();
-}
-
-function openAddSongModal(playlistId) {
-  currentPlaylistId = playlistId;
-  modalTitle.textContent = 'ADD SONG';
-  modalBodyCreate.classList.add('hidden');
-  modalBodyAddSong.classList.remove('hidden');
-  inputSongTitle.value = '';
-  inputSongArtist.value = '';
-  inputSongUrl.value = '';
-  currentSource = 'spotify';
-  sourceBtns.forEach((b) => b.classList.toggle('active', b.dataset.source === 'spotify'));
-  modal.classList.remove('hidden');
-  inputSongTitle.focus();
-}
-
-function closeModal() {
-  modal.classList.add('hidden');
-}
-
-document.getElementById('btn-new-playlist')?.addEventListener('click', openCreateModal);
-document.getElementById('modal-close')?.addEventListener('click', closeModal);
-
-modal?.addEventListener('click', (e) => {
-  if (e.target === modal) closeModal();
-});
-
-sourceBtns.forEach((btn) => {
-  btn.addEventListener('click', () => {
-    currentSource = btn.dataset.source;
-    sourceBtns.forEach((b) => b.classList.toggle('active', b === btn));
-  });
-});
-
-// Create playlist
-document.getElementById('btn-create-playlist')?.addEventListener('click', () => {
-  const name = inputPlaylistName.value.trim();
-  if (!name) return;
-
-  const playlists = loadPlaylists();
-  playlists.push({
-    id: generateId(),
-    name,
-    created: Date.now(),
-    songs: [],
-  });
-  savePlaylists(playlists);
-  closeModal();
-  renderPlaylists();
-});
-
-// Handle enter key in playlist name input
-inputPlaylistName?.addEventListener('keydown', (e) => {
-  if (e.key === 'Enter') document.getElementById('btn-create-playlist')?.click();
-});
-
-// Add song
-document.getElementById('btn-add-song')?.addEventListener('click', () => {
-  const title = inputSongTitle.value.trim();
-  const artist = inputSongArtist.value.trim();
-  if (!title) return;
-
-  const playlists = loadPlaylists();
-  const playlist = playlists.find((p) => p.id === currentPlaylistId);
-  if (!playlist) return;
-
-  playlist.songs.push({
-    id: generateId(),
-    title,
-    artist: artist || 'Unknown',
-    source: currentSource,
-    url: inputSongUrl.value.trim() || '',
-    added: Date.now(),
-  });
-  savePlaylists(playlists);
-  closeModal();
-  renderPlaylists();
-});
-
-inputSongUrl?.addEventListener('keydown', (e) => {
-  if (e.key === 'Enter') document.getElementById('btn-add-song')?.click();
-});
-
-// Auto-detect source from URL
-inputSongUrl?.addEventListener('input', () => {
-  const url = inputSongUrl.value;
-  if (url.includes('spotify.com')) {
-    currentSource = 'spotify';
-    sourceBtns.forEach((b) => b.classList.toggle('active', b.dataset.source === 'spotify'));
-  } else if (url.includes('youtube.com') || url.includes('youtu.be')) {
-    currentSource = 'youtube';
-    sourceBtns.forEach((b) => b.classList.toggle('active', b.dataset.source === 'youtube'));
+// Seeded shuffle for consistent daily order
+function seededShuffle(arr, seed) {
+  const result = [...arr];
+  let s = seed;
+  for (let i = result.length - 1; i > 0; i--) {
+    s = (s * 16807 + 0) % 2147483647;
+    const j = s % (i + 1);
+    [result[i], result[j]] = [result[j], result[i]];
   }
-});
+  return result;
+}
 
-// Render playlists
-function renderPlaylists() {
-  const playlists = loadPlaylists();
-  const grid = document.getElementById('playlists-grid');
-  const empty = document.getElementById('playlists-empty');
+function getDailyOrder(songs) {
+  const today = todayKey();
+  let seed = 0;
+  for (const ch of today) seed = seed * 31 + ch.charCodeAt(0);
+  return seededShuffle(songs, Math.abs(seed));
+}
 
-  if (!grid || !empty) return;
+// Capture now-playing from the last active music service
+async function captureNowPlaying() {
+  // Determine which music service was last active
+  const musicService = (activeService === 'spotify' || activeService === 'youtube')
+    ? activeService
+    : localStorage.getItem('musicio-last-music') || 'spotify';
 
-  if (playlists.length === 0) {
-    grid.innerHTML = '';
-    empty.style.display = 'flex';
+  const wv = webviews[musicService];
+  if (!wv) return null;
+
+  let script;
+  if (musicService === 'spotify') {
+    script = `
+      (() => {
+        const titleEl = document.querySelector('[data-testid="context-item-link"]')
+          || document.querySelector('.Root__now-playing-bar a[href*="/track/"]')
+          || document.querySelector('a[data-testid="nowplaying-track-link"]');
+        const artistEl = document.querySelector('[data-testid="context-item-info-subtitles"] a')
+          || document.querySelector('.Root__now-playing-bar span a[href*="/artist/"]');
+        if (!titleEl) return null;
+        return {
+          title: titleEl.textContent?.trim() || '',
+          artist: artistEl?.textContent?.trim() || 'Unknown Artist',
+        };
+      })()
+    `;
+  } else {
+    script = `
+      (() => {
+        const titleEl = document.querySelector('.title.ytmusic-player-bar')
+          || document.querySelector('yt-formatted-string.title');
+        const artistEl = document.querySelector('.byline.ytmusic-player-bar a')
+          || document.querySelector('span.subtitle yt-formatted-string a');
+        if (!titleEl) return null;
+        return {
+          title: titleEl.textContent?.trim() || '',
+          artist: artistEl?.textContent?.trim() || 'Unknown Artist',
+        };
+      })()
+    `;
+  }
+
+  try {
+    const result = await wv.executeJavaScript(script);
+    if (!result || !result.title) return null;
+    return { ...result, source: musicService };
+  } catch {
+    return null;
+  }
+}
+
+// UI: Capture button
+document.getElementById('btn-capture')?.addEventListener('click', async () => {
+  const btn = document.getElementById('btn-capture');
+  const song = await captureNowPlaying();
+
+  if (!song) {
+    btn.textContent = 'NO SONG DETECTED';
+    btn.style.borderColor = 'var(--neon-magenta)';
+    btn.style.color = 'var(--neon-magenta)';
+    setTimeout(() => {
+      btn.innerHTML = `<svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor" style="vertical-align: -2px; margin-right: 6px;"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/></svg>CAPTURE NOW PLAYING`;
+      btn.style.borderColor = '';
+      btn.style.color = '';
+    }, 2000);
     return;
   }
 
-  empty.style.display = 'none';
-  grid.innerHTML = playlists
-    .map(
-      (pl) => `
-    <div class="playlist-card" data-id="${pl.id}">
-      <div class="playlist-card-header">
-        <span class="playlist-card-name">${escapeHtml(pl.name)}</span>
-        <div style="display:flex;align-items:center;gap:6px;">
-          <span class="playlist-card-count">${pl.songs.length} song${pl.songs.length !== 1 ? 's' : ''}</span>
-          <div class="playlist-card-actions">
-            <button class="playlist-action-btn add-song-btn" data-id="${pl.id}" title="Add song">+</button>
-            <button class="playlist-action-btn delete playlist-delete-btn" data-id="${pl.id}" title="Delete playlist">&times;</button>
+  // Check for duplicates
+  const songs = getBlendSongs();
+  const exists = songs.some(
+    (s) => s.title.toLowerCase() === song.title.toLowerCase() && s.source === song.source
+  );
+
+  if (exists) {
+    btn.textContent = 'ALREADY IN BLEND';
+    setTimeout(() => {
+      btn.innerHTML = `<svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor" style="vertical-align: -2px; margin-right: 6px;"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/></svg>CAPTURE NOW PLAYING`;
+    }, 1500);
+    return;
+  }
+
+  // Add song
+  const data = loadBlend();
+  if (!data.songs) data.songs = [];
+  data.songs.push({
+    id: generateId(),
+    title: song.title,
+    artist: song.artist,
+    source: song.source,
+    captured: Date.now(),
+  });
+  saveBlend(data);
+
+  // Flash feedback
+  btn.textContent = `CAPTURED: ${song.title.toUpperCase()}`;
+  btn.classList.add('capture-flash');
+  setTimeout(() => {
+    btn.innerHTML = `<svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor" style="vertical-align: -2px; margin-right: 6px;"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/></svg>CAPTURE NOW PLAYING`;
+    btn.classList.remove('capture-flash');
+  }, 2000);
+
+  renderBlend();
+});
+
+// UI: Shuffle button
+document.getElementById('btn-shuffle-blend')?.addEventListener('click', () => {
+  // Use a random seed instead of the date seed
+  const data = loadBlend();
+  data.shuffleSeed = Math.floor(Math.random() * 2147483647);
+  saveBlend(data);
+  renderBlend();
+});
+
+// Track which music service was last active
+const origSwitchService = switchService;
+const _origSwitch = switchService;
+
+// Render the blend
+function renderBlend() {
+  const songs = getBlendSongs();
+  const blendList = document.getElementById('blend-list');
+  const blendEmpty = document.getElementById('blend-empty');
+  const dateEl = document.getElementById('blend-date');
+
+  if (dateEl) {
+    const d = new Date();
+    dateEl.textContent = d.toLocaleDateString('en-US', {
+      weekday: 'long',
+      month: 'long',
+      day: 'numeric',
+    }).toUpperCase();
+  }
+
+  if (!blendList || !blendEmpty) return;
+
+  if (songs.length === 0) {
+    blendList.innerHTML = '';
+    blendEmpty.style.display = 'flex';
+    return;
+  }
+
+  blendEmpty.style.display = 'none';
+
+  // Get shuffled order
+  const data = loadBlend();
+  const ordered = data.shuffleSeed
+    ? seededShuffle(songs, data.shuffleSeed)
+    : getDailyOrder(songs);
+
+  blendList.innerHTML = ordered
+    .map((song, i) => {
+      const timeAgo = getTimeAgo(song.captured);
+      return `
+        <div class="blend-song">
+          <span class="blend-song-num">${i + 1}</span>
+          <span class="blend-song-badge ${song.source}">${song.source === 'spotify' ? 'SPOTIFY' : 'YOUTUBE'}</span>
+          <div class="blend-song-info">
+            <div class="blend-song-title">${escapeHtml(song.title)}</div>
+            <div class="blend-song-artist">${escapeHtml(song.artist)}</div>
           </div>
+          <span class="blend-song-time">${timeAgo}</span>
+          <button class="blend-song-remove" data-id="${song.id}" title="Remove">&times;</button>
         </div>
-      </div>
-      <div class="playlist-songs">
-        ${pl.songs
-          .map(
-            (song) => `
-          <div class="song-item">
-            <span class="song-source-badge ${song.source}">${song.source === 'spotify' ? 'SP' : 'YT'}</span>
-            <div class="song-info">
-              <div class="song-title">${song.url ? `<a href="${escapeHtml(song.url)}" style="color:inherit;text-decoration:none;" title="Open in browser">${escapeHtml(song.title)}</a>` : escapeHtml(song.title)}</div>
-              <div class="song-artist">${escapeHtml(song.artist)}</div>
-            </div>
-            <button class="song-remove" data-playlist="${pl.id}" data-song="${song.id}" title="Remove">&times;</button>
-          </div>
-        `
-          )
-          .join('')}
-      </div>
-    </div>
-  `
-    )
+      `;
+    })
     .join('');
 
-  // Attach event listeners
-  grid.querySelectorAll('.add-song-btn').forEach((btn) => {
-    btn.addEventListener('click', (e) => {
-      e.stopPropagation();
-      openAddSongModal(btn.dataset.id);
-    });
-  });
-
-  grid.querySelectorAll('.playlist-delete-btn').forEach((btn) => {
-    btn.addEventListener('click', (e) => {
-      e.stopPropagation();
-      deletePlaylist(btn.dataset.id);
-    });
-  });
-
-  grid.querySelectorAll('.song-remove').forEach((btn) => {
+  blendList.querySelectorAll('.blend-song-remove').forEach((btn) => {
     btn.addEventListener('click', () => {
-      removeSong(btn.dataset.playlist, btn.dataset.song);
+      removeSongFromBlend(btn.dataset.id);
     });
   });
 }
 
-function deletePlaylist(id) {
-  const playlists = loadPlaylists().filter((p) => p.id !== id);
-  savePlaylists(playlists);
-  renderPlaylists();
+function removeSongFromBlend(songId) {
+  const data = loadBlend();
+  data.songs = (data.songs || []).filter((s) => s.id !== songId);
+  saveBlend(data);
+  renderBlend();
 }
 
-function removeSong(playlistId, songId) {
-  const playlists = loadPlaylists();
-  const playlist = playlists.find((p) => p.id === playlistId);
-  if (!playlist) return;
-  playlist.songs = playlist.songs.filter((s) => s.id !== songId);
-  savePlaylists(playlists);
-  renderPlaylists();
+function getTimeAgo(timestamp) {
+  const diff = Date.now() - timestamp;
+  const mins = Math.floor(diff / 60000);
+  if (mins < 1) return 'just now';
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  const days = Math.floor(hrs / 24);
+  return `${days}d ago`;
 }
 
 function escapeHtml(str) {

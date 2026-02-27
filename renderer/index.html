@@ -58,11 +58,11 @@
         </svg>
         <span class="sidebar-tooltip">YouTube Music</span>
       </button>
-      <button class="sidebar-btn" data-service="playlists" title="My Playlists">
+      <button class="sidebar-btn" data-service="blend" title="Daily Blend">
         <svg viewBox="0 0 24 24" width="28" height="28" fill="currentColor">
-          <path d="M3 4h14v2H3V4zm0 4h14v2H3V8zm0 4h10v2H3v-2zm16-4v8.18c-.31-.11-.65-.18-1-.18-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3V10h2V8h-4z"/>
+          <path d="M18 4l-1.41 1.41L18.17 7H14.5C12 7 10 9 10 11.5S12 16 14.5 16h1.67l-1.58 1.59L16 19l4-4-4-4-1.41 1.41L16.17 14H14.5C13.12 14 12 12.88 12 11.5S13.12 9 14.5 9h3.67l-1.58 1.59L18 12l4-4-4-4zM6 9h4.5l-.86-1.2C9.26 7.28 8.66 7 8 7H6V5h2c1.22 0 2.36.55 3.13 1.5l1.59 2.22-1.22 1.71C10.78 11.45 9.64 12 8.42 12H6v-3zm0 5h2.42c.66 0 1.26-.28 1.64-.8l.86-1.2H6v2z"/>
         </svg>
-        <span class="sidebar-tooltip">My Playlists</span>
+        <span class="sidebar-tooltip">Daily Blend</span>
       </button>
       <div class="sidebar-divider"></div>
       <div class="sidebar-indicator"></div>
@@ -85,47 +85,37 @@
         class="webview"
       ></webview>
 
-      <!-- Playlists View -->
-      <div id="playlists-view" class="view-panel">
-        <div class="playlists-header">
-          <h2 class="playlists-title" data-text="MY PLAYLISTS">MY PLAYLISTS</h2>
-          <button id="btn-new-playlist" class="neon-btn">+ NEW PLAYLIST</button>
-        </div>
-
-        <!-- New Playlist / Add Song Modal -->
-        <div id="playlist-modal" class="modal hidden">
-          <div class="modal-content">
-            <div class="modal-header">
-              <h3 id="modal-title">NEW PLAYLIST</h3>
-              <button id="modal-close" class="modal-close-btn">&times;</button>
-            </div>
-            <div id="modal-body-create">
-              <input type="text" id="input-playlist-name" class="neon-input" placeholder="Playlist name..." maxlength="60">
-              <button id="btn-create-playlist" class="neon-btn">CREATE</button>
-            </div>
-            <div id="modal-body-add-song" class="hidden">
-              <input type="text" id="input-song-title" class="neon-input" placeholder="Song title...">
-              <input type="text" id="input-song-artist" class="neon-input" placeholder="Artist...">
-              <input type="text" id="input-song-url" class="neon-input" placeholder="URL (optional)...">
-              <div class="source-select">
-                <button class="source-btn active" data-source="spotify">Spotify</button>
-                <button class="source-btn" data-source="youtube">YouTube</button>
-              </div>
-              <button id="btn-add-song" class="neon-btn">ADD SONG</button>
-            </div>
+      <!-- Daily Blend View -->
+      <div id="blend-view" class="view-panel">
+        <div class="blend-header">
+          <div class="blend-title-row">
+            <h2 class="blend-title">DAILY BLEND</h2>
+            <span id="blend-date" class="blend-date"></span>
+          </div>
+          <p class="blend-subtitle">Your cross-platform mix, refreshed daily</p>
+          <div class="blend-actions">
+            <button id="btn-capture" class="neon-btn capture-btn">
+              <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor" style="vertical-align: -2px; margin-right: 6px;">
+                <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/>
+              </svg>
+              CAPTURE NOW PLAYING
+            </button>
+            <button id="btn-shuffle-blend" class="neon-btn shuffle-btn">SHUFFLE</button>
           </div>
         </div>
 
-        <div id="playlists-grid" class="playlists-grid">
-          <!-- Playlists rendered here by JS -->
+        <div id="blend-list" class="blend-list">
+          <!-- Songs rendered by JS -->
         </div>
 
-        <div id="playlists-empty" class="playlists-empty">
-          <svg viewBox="0 0 24 24" width="64" height="64" fill="currentColor" opacity="0.2">
-            <path d="M3 4h14v2H3V4zm0 4h14v2H3V8zm0 4h10v2H3v-2zm16-4v8.18c-.31-.11-.65-.18-1-.18-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3V10h2V8h-4z"/>
-          </svg>
-          <p>No playlists yet</p>
-          <p class="dim">Create your first cross-platform playlist</p>
+        <div id="blend-empty" class="blend-empty">
+          <div class="blend-empty-icon">
+            <svg viewBox="0 0 24 24" width="72" height="72" fill="currentColor">
+              <path d="M18 4l-1.41 1.41L18.17 7H14.5C12 7 10 9 10 11.5S12 16 14.5 16h1.67l-1.58 1.59L16 19l4-4-4-4-1.41 1.41L16.17 14H14.5C13.12 14 12 12.88 12 11.5S13.12 9 14.5 9h3.67l-1.58 1.59L18 12l4-4-4-4zM6 9h4.5l-.86-1.2C9.26 7.28 8.66 7 8 7H6V5h2c1.22 0 2.36.55 3.13 1.5l1.59 2.22-1.22 1.71C10.78 11.45 9.64 12 8.42 12H6v-3zm0 5h2.42c.66 0 1.26-.28 1.64-.8l.86-1.2H6v2z"/>
+            </svg>
+          </div>
+          <p class="blend-empty-title">Your blend is empty</p>
+          <p class="blend-empty-sub">Play a song on Spotify or YouTube Music, then hit<br><strong>Capture Now Playing</strong> to add it to your daily blend</p>
         </div>
       </div>
     </div>
