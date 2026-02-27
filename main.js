@@ -1,5 +1,6 @@
 const {
   app,
+  components,
   BrowserWindow,
   Menu,
   shell,
@@ -23,43 +24,6 @@ const CLEAN_UA = app.userAgentFallback
   .replace(/\s*musicio\/[\d.]+/i, '');
 
 app.userAgentFallback = CLEAN_UA;
-
-// ============================================
-// Widevine CDM detection (for Spotify DRM playback)
-// ============================================
-// Tries to find Chrome's Widevine CDM on the system.
-// If Chrome is installed, Spotify playback will work.
-
-function findWidevineCDM() {
-  const chromePaths = [
-    '/Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/Current/Libraries/WidevineCdm',
-    '/Applications/Google Chrome Canary.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/Current/Libraries/WidevineCdm',
-    '/Applications/Chromium.app/Contents/Frameworks/Chromium Framework.framework/Versions/Current/Libraries/WidevineCdm',
-    '/Applications/Brave Browser.app/Contents/Frameworks/Brave Browser Framework.framework/Versions/Current/Libraries/WidevineCdm',
-    '/Applications/Microsoft Edge.app/Contents/Frameworks/Microsoft Edge Framework.framework/Versions/Current/Libraries/WidevineCdm',
-    '/Applications/Vivaldi.app/Contents/Frameworks/Vivaldi Framework.framework/Versions/Current/Libraries/WidevineCdm',
-  ];
-
-  for (const cdmPath of chromePaths) {
-    const manifestPath = path.join(cdmPath, 'manifest.json');
-    if (fs.existsSync(manifestPath)) {
-      try {
-        const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf-8'));
-        return { path: cdmPath, version: manifest.version };
-      } catch { /* skip */ }
-    }
-  }
-  return null;
-}
-
-const widevine = findWidevineCDM();
-if (widevine) {
-  app.commandLine.appendSwitch('widevine-cdm-path', widevine.path);
-  app.commandLine.appendSwitch('widevine-cdm-version', widevine.version);
-  console.log(`Loaded Widevine CDM v${widevine.version} from: ${widevine.path}`);
-} else {
-  console.log('No Widevine CDM found. Spotify playback may not work. Install Chrome/Brave/Edge to enable DRM.');
-}
 
 // ============================================
 // Ad blocker setup
@@ -331,6 +295,16 @@ async function importPendingCookies() {
 // ============================================
 
 app.whenReady().then(async () => {
+  // Initialize Widevine CDM (castlabs fork auto-downloads it)
+  if (components && components.whenReady) {
+    try {
+      await components.whenReady();
+      console.log('Widevine CDM ready');
+    } catch (err) {
+      console.error('Widevine CDM init failed:', err.message);
+    }
+  }
+
   buildAppMenu();
   createWindow();
   await importPendingCookies();

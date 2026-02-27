@@ -29,10 +29,13 @@
         {
           "target": "dmg",
           "arch": [
-            "universal"
+            "arm64"
           ]
         }
       ]
+    },
+    "electronDownload": {
+      "mirror": "https://github.com/castlabs/electron-releases/releases/download/"
     },
     "dmg": {
       "title": "Musicio",
@@ -52,7 +55,7 @@
     }
   },
   "devDependencies": {
-    "electron": "^33.0.0",
+    "electron": "github:castlabs/electron-releases#v38.2.0+wvcus",
     "electron-builder": "^25.1.8"
   },
   "dependencies": {
