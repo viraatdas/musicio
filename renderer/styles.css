@@ -706,3 +706,215 @@ html, body {
   color: var(--neon-cyan);
   font-weight: normal;
 }
+
+.blend-loading-spinner {
+  width: 40px;
+  height: 40px;
+  border: 3px solid var(--bg-tertiary);
+  border-top-color: var(--neon-purple);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+  margin-bottom: 8px;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+/* Blend song play button */
+.blend-song-play {
+  border: none;
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: 4px;
+  font-family: var(--font-mono);
+  font-size: 0.6rem;
+  letter-spacing: 0.05em;
+  transition: color 0.15s, background 0.15s;
+  flex-shrink: 0;
+  opacity: 0;
+}
+
+.blend-song:hover .blend-song-play {
+  opacity: 1;
+}
+
+.blend-song-play:hover {
+  color: var(--neon-cyan);
+  background: rgba(0, 240, 255, 0.08);
+}
+
+/* ============================================
+   Sidebar small button
+   ============================================ */
+
+.sidebar-btn-small {
+  width: 40px;
+  height: 40px;
+  margin-top: auto;
+  margin-bottom: 16px;
+  border-radius: 10px;
+}
+
+.sidebar-btn-small:hover {
+  color: var(--neon-magenta);
+  background: rgba(255, 0, 170, 0.06);
+  border-color: rgba(255, 0, 170, 0.15);
+}
+
+/* ============================================
+   Cookie Import Modal
+   ============================================ */
+
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 2000;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.75);
+  backdrop-filter: blur(6px);
+}
+
+.modal-overlay.visible {
+  display: flex;
+}
+
+.modal-box {
+  width: 560px;
+  max-height: 80vh;
+  background: var(--bg-secondary);
+  border: 1px solid rgba(255, 0, 170, 0.2);
+  border-radius: 14px;
+  box-shadow: 0 0 40px rgba(255, 0, 170, 0.1), 0 0 80px rgba(0, 0, 0, 0.5);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 20px 24px 16px;
+  border-bottom: 1px solid rgba(255, 0, 170, 0.08);
+}
+
+.modal-title {
+  font-family: var(--font-display);
+  font-size: 0.8rem;
+  font-weight: 700;
+  letter-spacing: 0.15em;
+  color: var(--neon-magenta);
+  text-shadow: var(--glow-magenta);
+}
+
+.modal-close-btn {
+  border: none;
+  background: transparent;
+  color: var(--text-dim);
+  font-size: 1.4rem;
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: 6px;
+  transition: color 0.15s, background 0.15s;
+}
+
+.modal-close-btn:hover {
+  color: var(--neon-magenta);
+  background: rgba(255, 0, 170, 0.1);
+}
+
+.modal-body {
+  padding: 20px 24px;
+  overflow-y: auto;
+  flex: 1;
+}
+
+.modal-steps {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-bottom: 20px;
+}
+
+.modal-step {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  font-size: 0.75rem;
+  color: var(--text-dim);
+  line-height: 1.5;
+}
+
+.modal-step strong {
+  color: var(--text-primary);
+  font-weight: normal;
+}
+
+.step-num {
+  width: 22px;
+  height: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  font-family: var(--font-display);
+  font-size: 0.6rem;
+  font-weight: 700;
+  color: var(--neon-magenta);
+  border: 1px solid rgba(255, 0, 170, 0.3);
+  border-radius: 50%;
+  background: rgba(255, 0, 170, 0.06);
+}
+
+.modal-textarea {
+  width: 100%;
+  height: 140px;
+  background: var(--bg-primary);
+  border: 1px solid rgba(255, 0, 170, 0.15);
+  border-radius: 8px;
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  padding: 12px;
+  resize: vertical;
+  outline: none;
+  transition: border-color 0.2s;
+}
+
+.modal-textarea:focus {
+  border-color: var(--neon-magenta);
+  box-shadow: 0 0 10px rgba(255, 0, 170, 0.15);
+}
+
+.modal-textarea::placeholder {
+  color: var(--text-dim);
+  opacity: 0.5;
+}
+
+.modal-status {
+  margin-top: 12px;
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  min-height: 20px;
+}
+
+.modal-status.success {
+  color: var(--neon-green);
+}
+
+.modal-status.error {
+  color: var(--neon-magenta);
+}
+
+.modal-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  padding: 16px 24px 20px;
+  border-top: 1px solid rgba(255, 0, 170, 0.08);
+}

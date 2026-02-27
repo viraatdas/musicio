@@ -60,11 +60,17 @@
       </button>
       <button class="sidebar-btn" data-service="blend" title="Daily Blend">
         <svg viewBox="0 0 24 24" width="28" height="28" fill="currentColor">
-          <path d="M18 4l-1.41 1.41L18.17 7H14.5C12 7 10 9 10 11.5S12 16 14.5 16h1.67l-1.58 1.59L16 19l4-4-4-4-1.41 1.41L16.17 14H14.5C13.12 14 12 12.88 12 11.5S13.12 9 14.5 9h3.67l-1.58 1.59L18 12l4-4-4-4zM6 9h4.5l-.86-1.2C9.26 7.28 8.66 7 8 7H6V5h2c1.22 0 2.36.55 3.13 1.5l1.59 2.22-1.22 1.71C10.78 11.45 9.64 12 8.42 12H6v-3zm0 5h2.42c.66 0 1.26-.28 1.64-.8l.86-1.2H6v2z"/>
+          <path d="M3 18h2v-6H3v6zm4 0h2V8H7v10zm4 0h2V4h-2v14zm4 0h2V8h-2v10zm4 0h2v-6h-2v6z"/>
         </svg>
         <span class="sidebar-tooltip">Daily Blend</span>
       </button>
       <div class="sidebar-divider"></div>
+      <button class="sidebar-btn sidebar-btn-small" id="btn-yt-cookies" title="Import YouTube Cookies">
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
+          <path d="M18 8h-1V6c0-2.76-2.24-5-5-5S7 3.24 7 6v2H6c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V10c0-1.1-.9-2-2-2zm-6 9c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2zm3.1-9H8.9V6c0-1.71 1.39-3.1 3.1-3.1 1.71 0 3.1 1.39 3.1 3.1v2z"/>
+        </svg>
+        <span class="sidebar-tooltip">Import YouTube Cookies</span>
+      </button>
       <div class="sidebar-indicator"></div>
     </div>
 
@@ -92,13 +98,13 @@
             <h2 class="blend-title">DAILY BLEND</h2>
             <span id="blend-date" class="blend-date"></span>
           </div>
-          <p class="blend-subtitle">Your cross-platform mix, refreshed daily</p>
+          <p class="blend-subtitle">10 songs curated daily from your Spotify &amp; YouTube Music</p>
           <div class="blend-actions">
-            <button id="btn-capture" class="neon-btn capture-btn">
-              <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor" style="vertical-align: -2px; margin-right: 6px;">
-                <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/>
+            <button id="btn-refresh-blend" class="neon-btn capture-btn">
+              <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor" style="vertical-align: -2px; margin-right: 6px;">
+                <path d="M17.65 6.35C16.2 4.9 14.21 4 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08c-.82 2.33-3.04 4-5.65 4-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/>
               </svg>
-              CAPTURE NOW PLAYING
+              REFRESH
             </button>
             <button id="btn-shuffle-blend" class="neon-btn shuffle-btn">SHUFFLE</button>
           </div>
@@ -108,19 +114,61 @@
           <!-- Songs rendered by JS -->
         </div>
 
+        <div id="blend-loading" class="blend-empty" style="display: none;">
+          <div class="blend-loading-spinner"></div>
+          <p class="blend-empty-title">Scanning your music...</p>
+          <p class="blend-empty-sub">Pulling recommendations from Spotify &amp; YouTube Music</p>
+        </div>
+
         <div id="blend-empty" class="blend-empty">
           <div class="blend-empty-icon">
             <svg viewBox="0 0 24 24" width="72" height="72" fill="currentColor">
-              <path d="M18 4l-1.41 1.41L18.17 7H14.5C12 7 10 9 10 11.5S12 16 14.5 16h1.67l-1.58 1.59L16 19l4-4-4-4-1.41 1.41L16.17 14H14.5C13.12 14 12 12.88 12 11.5S13.12 9 14.5 9h3.67l-1.58 1.59L18 12l4-4-4-4zM6 9h4.5l-.86-1.2C9.26 7.28 8.66 7 8 7H6V5h2c1.22 0 2.36.55 3.13 1.5l1.59 2.22-1.22 1.71C10.78 11.45 9.64 12 8.42 12H6v-3zm0 5h2.42c.66 0 1.26-.28 1.64-.8l.86-1.2H6v2z"/>
+              <path d="M3 18h2v-6H3v6zm4 0h2V8H7v10zm4 0h2V4h-2v14zm4 0h2V8h-2v10zm4 0h2v-6h-2v6z"/>
             </svg>
           </div>
-          <p class="blend-empty-title">Your blend is empty</p>
-          <p class="blend-empty-sub">Play a song on Spotify or YouTube Music, then hit<br><strong>Capture Now Playing</strong> to add it to your daily blend</p>
+          <p class="blend-empty-title">No songs found yet</p>
+          <p class="blend-empty-sub">Browse some music on Spotify or YouTube Music first,<br>then come back and hit <strong>Refresh</strong> to generate your daily blend</p>
         </div>
       </div>
     </div>
 
     <div class="scanlines"></div>
+  </div>
+
+  <!-- Cookie Import Modal -->
+  <div id="cookie-modal" class="modal-overlay">
+    <div class="modal-box">
+      <div class="modal-header">
+        <h3 class="modal-title">IMPORT YOUTUBE COOKIES</h3>
+        <button id="modal-close" class="modal-close-btn">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div class="modal-steps">
+          <div class="modal-step">
+            <span class="step-num">1</span>
+            <span>Install the <strong>Cookie-Editor</strong> extension in Chrome/Edge/Firefox</span>
+          </div>
+          <div class="modal-step">
+            <span class="step-num">2</span>
+            <span>Open <strong>music.youtube.com</strong> in your browser and sign in</span>
+          </div>
+          <div class="modal-step">
+            <span class="step-num">3</span>
+            <span>Click the Cookie-Editor icon and click <strong>"Export"</strong> (JSON format)</span>
+          </div>
+          <div class="modal-step">
+            <span class="step-num">4</span>
+            <span>Paste the cookies below and click Import</span>
+          </div>
+        </div>
+        <textarea id="cookie-input" class="modal-textarea" placeholder='Paste exported cookies here (JSON format)...' spellcheck="false"></textarea>
+        <div id="cookie-status" class="modal-status"></div>
+      </div>
+      <div class="modal-footer">
+        <button id="btn-cookie-cancel" class="neon-btn">CANCEL</button>
+        <button id="btn-cookie-import" class="neon-btn capture-btn">IMPORT COOKIES</button>
+      </div>
+    </div>
   </div>
 
   <script src="app.js"></script>

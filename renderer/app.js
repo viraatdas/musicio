@@ -75,7 +75,9 @@ function switchService(service) {
 
   updateIndicator(service);
 
-  if (service === 'blend') renderBlend();
+  if (service === 'blend') {
+    fetchDailyBlend().then(() => renderBlend());
+  }
 }
 
 function updateIndicator(service) {
@@ -175,10 +177,11 @@ window.electronAPI?.onMediaKey((key) => {
 });
 
 // ============================================
-// Daily Blend
+// Daily Blend - Auto-curated from both services
 // ============================================
 
 const BLEND_KEY = 'musicio-blend';
+const SONGS_PER_SERVICE = 5;
 
 function todayKey() {
   const d = new Date();
@@ -186,26 +189,14 @@ function todayKey() {
 }
 
 function loadBlend() {
-  try {
-    const data = JSON.parse(localStorage.getItem(BLEND_KEY)) || {};
-    return data;
-  } catch { return {}; }
+  try { return JSON.parse(localStorage.getItem(BLEND_KEY)) || {}; }
+  catch { return {}; }
 }
 
 function saveBlend(data) {
   localStorage.setItem(BLEND_KEY, JSON.stringify(data));
 }
 
-function getBlendSongs() {
-  const data = loadBlend();
-  return data.songs || [];
-}
-
-function generateId() {
-  return Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
-}
-
-// Seeded shuffle for consistent daily order
 function seededShuffle(arr, seed) {
   const result = [...arr];
   let s = seed;
@@ -217,147 +208,212 @@ function seededShuffle(arr, seed) {
   return result;
 }
 
-function getDailyOrder(songs) {
+function getDailySeed() {
   const today = todayKey();
   let seed = 0;
   for (const ch of today) seed = seed * 31 + ch.charCodeAt(0);
-  return seededShuffle(songs, Math.abs(seed));
+  return Math.abs(seed);
 }
 
-// Capture now-playing from the last active music service
-async function captureNowPlaying() {
-  // Determine which music service was last active
-  const musicService = (activeService === 'spotify' || activeService === 'youtube')
-    ? activeService
-    : localStorage.getItem('musicio-last-music') || 'spotify';
+// ---- Scraping scripts ----
 
-  const wv = webviews[musicService];
-  if (!wv) return null;
+const SPOTIFY_SCRAPE = `
+(() => {
+  const songs = [];
+  const seen = new Set();
 
-  let script;
-  if (musicService === 'spotify') {
-    script = `
-      (() => {
-        const titleEl = document.querySelector('[data-testid="context-item-link"]')
-          || document.querySelector('.Root__now-playing-bar a[href*="/track/"]')
-          || document.querySelector('a[data-testid="nowplaying-track-link"]');
-        const artistEl = document.querySelector('[data-testid="context-item-info-subtitles"] a')
-          || document.querySelector('.Root__now-playing-bar span a[href*="/artist/"]');
-        if (!titleEl) return null;
-        return {
-          title: titleEl.textContent?.trim() || '',
-          artist: artistEl?.textContent?.trim() || 'Unknown Artist',
-        };
-      })()
-    `;
-  } else {
-    script = `
-      (() => {
-        const titleEl = document.querySelector('.title.ytmusic-player-bar')
-          || document.querySelector('yt-formatted-string.title');
-        const artistEl = document.querySelector('.byline.ytmusic-player-bar a')
-          || document.querySelector('span.subtitle yt-formatted-string a');
-        if (!titleEl) return null;
-        return {
-          title: titleEl.textContent?.trim() || '',
-          artist: artistEl?.textContent?.trim() || 'Unknown Artist',
-        };
-      })()
-    `;
+  function add(title, artist) {
+    const key = (title + '|' + artist).toLowerCase();
+    if (!title || seen.has(key)) return;
+    seen.add(key);
+    songs.push({ title, artist: artist || 'Unknown Artist' });
   }
 
-  try {
-    const result = await wv.executeJavaScript(script);
-    if (!result || !result.title) return null;
-    return { ...result, source: musicService };
-  } catch {
-    return null;
-  }
-}
-
-// UI: Capture button
-document.getElementById('btn-capture')?.addEventListener('click', async () => {
-  const btn = document.getElementById('btn-capture');
-  const song = await captureNowPlaying();
-
-  if (!song) {
-    btn.textContent = 'NO SONG DETECTED';
-    btn.style.borderColor = 'var(--neon-magenta)';
-    btn.style.color = 'var(--neon-magenta)';
-    setTimeout(() => {
-      btn.innerHTML = `<svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor" style="vertical-align: -2px; margin-right: 6px;"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/></svg>CAPTURE NOW PLAYING`;
-      btn.style.borderColor = '';
-      btn.style.color = '';
-    }, 2000);
-    return;
-  }
-
-  // Check for duplicates
-  const songs = getBlendSongs();
-  const exists = songs.some(
-    (s) => s.title.toLowerCase() === song.title.toLowerCase() && s.source === song.source
-  );
-
-  if (exists) {
-    btn.textContent = 'ALREADY IN BLEND';
-    setTimeout(() => {
-      btn.innerHTML = `<svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor" style="vertical-align: -2px; margin-right: 6px;"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/></svg>CAPTURE NOW PLAYING`;
-    }, 1500);
-    return;
-  }
-
-  // Add song
-  const data = loadBlend();
-  if (!data.songs) data.songs = [];
-  data.songs.push({
-    id: generateId(),
-    title: song.title,
-    artist: song.artist,
-    source: song.source,
-    captured: Date.now(),
+  // Strategy 1: Tracklist rows (playlists, albums, liked songs, search results)
+  document.querySelectorAll('[data-testid="tracklist-row"]').forEach(row => {
+    const titleEl = row.querySelector('a[data-testid="internal-track-link"] div')
+      || row.querySelector('[data-testid="internal-track-link"]');
+    const artistEls = row.querySelectorAll('a[href*="/artist/"]');
+    const title = titleEl?.textContent?.trim();
+    const artist = artistEls.length > 0
+      ? [...artistEls].map(a => a.textContent.trim()).join(', ')
+      : '';
+    add(title, artist);
   });
-  saveBlend(data);
 
-  // Flash feedback
-  btn.textContent = `CAPTURED: ${song.title.toUpperCase()}`;
-  btn.classList.add('capture-flash');
-  setTimeout(() => {
-    btn.innerHTML = `<svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor" style="vertical-align: -2px; margin-right: 6px;"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/></svg>CAPTURE NOW PLAYING`;
-    btn.classList.remove('capture-flash');
-  }, 2000);
+  // Strategy 2: Home page recommendation cards
+  if (songs.length < 3) {
+    document.querySelectorAll('[data-testid="card-click-handler"]').forEach(card => {
+      const title = card.querySelector('[data-testid="card-title"] a')?.textContent?.trim()
+        || card.querySelector('[data-testid="card-title"]')?.textContent?.trim();
+      const subtitle = card.querySelector('[data-testid="card-subtitle"]')?.textContent?.trim();
+      add(title, subtitle);
+    });
+  }
 
-  renderBlend();
-});
+  // Strategy 3: Now playing bar (at least get current song)
+  if (songs.length === 0) {
+    const titleEl = document.querySelector('[data-testid="context-item-link"]')
+      || document.querySelector('a[data-testid="nowplaying-track-link"]');
+    const artistEl = document.querySelector('[data-testid="context-item-info-subtitles"] a');
+    if (titleEl) add(titleEl.textContent?.trim(), artistEl?.textContent?.trim());
+  }
 
-// UI: Shuffle button
-document.getElementById('btn-shuffle-blend')?.addEventListener('click', () => {
-  // Use a random seed instead of the date seed
+  return songs;
+})()
+`;
+
+const YOUTUBE_SCRAPE = `
+(() => {
+  const songs = [];
+  const seen = new Set();
+
+  function add(title, artist) {
+    const key = (title + '|' + artist).toLowerCase();
+    if (!title || seen.has(key)) return;
+    seen.add(key);
+    songs.push({ title, artist: artist || 'Unknown Artist' });
+  }
+
+  // Strategy 1: Responsive list items (Quick picks, Listen again, recommendations)
+  document.querySelectorAll('ytmusic-responsive-list-item-renderer').forEach(item => {
+    const title = item.querySelector('.title-column yt-formatted-string.title')?.textContent?.trim()
+      || item.querySelector('yt-formatted-string.title')?.textContent?.trim();
+    const artistEl = item.querySelector('.secondary-flex-columns yt-formatted-string a')
+      || item.querySelector('.secondary-flex-columns yt-formatted-string');
+    add(title, artistEl?.textContent?.trim());
+  });
+
+  // Strategy 2: Shelf items / two-row items (carousels on home page)
+  if (songs.length < 3) {
+    document.querySelectorAll('ytmusic-two-row-item-renderer').forEach(item => {
+      const title = item.querySelector('yt-formatted-string.title a')?.textContent?.trim()
+        || item.querySelector('yt-formatted-string.title')?.textContent?.trim();
+      const subtitle = item.querySelector('.subtitle yt-formatted-string a')?.textContent?.trim()
+        || item.querySelector('.subtitle yt-formatted-string')?.textContent?.trim();
+      add(title, subtitle);
+    });
+  }
+
+  // Strategy 3: Queue / Up Next items
+  if (songs.length < 3) {
+    document.querySelectorAll('ytmusic-player-queue-item').forEach(item => {
+      const title = item.querySelector('.song-title')?.textContent?.trim();
+      const artist = item.querySelector('.byline')?.textContent?.trim();
+      add(title, artist);
+    });
+  }
+
+  // Strategy 4: Now playing bar
+  if (songs.length === 0) {
+    const title = document.querySelector('.title.ytmusic-player-bar')?.textContent?.trim();
+    const artist = document.querySelector('.byline.ytmusic-player-bar a')?.textContent?.trim();
+    if (title) add(title, artist);
+  }
+
+  return songs;
+})()
+`;
+
+async function scrapeService(service) {
+  const wv = webviews[service];
+  if (!wv) return [];
+  const script = service === 'spotify' ? SPOTIFY_SCRAPE : YOUTUBE_SCRAPE;
+  try {
+    const results = await wv.executeJavaScript(script);
+    return (results || []).map(s => ({ ...s, source: service }));
+  } catch {
+    return [];
+  }
+}
+
+async function fetchDailyBlend(forceRefresh = false) {
   const data = loadBlend();
-  data.shuffleSeed = Math.floor(Math.random() * 2147483647);
-  saveBlend(data);
+  const today = todayKey();
+
+  // Return cached if same day and not forcing refresh
+  if (!forceRefresh && data.date === today && data.songs && data.songs.length > 0) {
+    return data.songs;
+  }
+
+  // Show loading state
+  const blendLoading = document.getElementById('blend-loading');
+  const blendEmpty = document.getElementById('blend-empty');
+  const blendList = document.getElementById('blend-list');
+  if (blendLoading) blendLoading.style.display = 'flex';
+  if (blendEmpty) blendEmpty.style.display = 'none';
+  if (blendList) blendList.innerHTML = '';
+
+  // Scrape both services in parallel
+  const [spotifySongs, youtubeSongs] = await Promise.all([
+    scrapeService('spotify'),
+    scrapeService('youtube'),
+  ]);
+
+  // Pick up to SONGS_PER_SERVICE from each, fill remainder from the other
+  let picked = [];
+  const sPick = spotifySongs.slice(0, SONGS_PER_SERVICE);
+  const yPick = youtubeSongs.slice(0, SONGS_PER_SERVICE);
+  picked = [...sPick, ...yPick];
+
+  // If one service returned fewer, fill from the other
+  if (sPick.length < SONGS_PER_SERVICE && youtubeSongs.length > SONGS_PER_SERVICE) {
+    const extra = youtubeSongs.slice(SONGS_PER_SERVICE, SONGS_PER_SERVICE + (SONGS_PER_SERVICE - sPick.length));
+    picked.push(...extra);
+  }
+  if (yPick.length < SONGS_PER_SERVICE && spotifySongs.length > SONGS_PER_SERVICE) {
+    const extra = spotifySongs.slice(SONGS_PER_SERVICE, SONGS_PER_SERVICE + (SONGS_PER_SERVICE - yPick.length));
+    picked.push(...extra);
+  }
+
+  // Shuffle with daily seed
+  picked = seededShuffle(picked, getDailySeed());
+
+  // Cache
+  saveBlend({ date: today, songs: picked, shuffleSeed: null });
+
+  if (blendLoading) blendLoading.style.display = 'none';
+  return picked;
+}
+
+// ---- Blend UI ----
+
+document.getElementById('btn-refresh-blend')?.addEventListener('click', async () => {
+  const btn = document.getElementById('btn-refresh-blend');
+  btn.disabled = true;
+  btn.textContent = 'SCANNING...';
+  await fetchDailyBlend(true);
   renderBlend();
+  btn.disabled = false;
+  btn.innerHTML = '<svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor" style="vertical-align: -2px; margin-right: 6px;"><path d="M17.65 6.35C16.2 4.9 14.21 4 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08c-.82 2.33-3.04 4-5.65 4-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/></svg>REFRESH';
 });
 
-// Track which music service was last active
-const origSwitchService = switchService;
-const _origSwitch = switchService;
+document.getElementById('btn-shuffle-blend')?.addEventListener('click', () => {
+  const data = loadBlend();
+  if (data.songs && data.songs.length > 0) {
+    data.shuffleSeed = Math.floor(Math.random() * 2147483647);
+    data.songs = seededShuffle(data.songs, data.shuffleSeed);
+    saveBlend(data);
+    renderBlend();
+  }
+});
 
-// Render the blend
-function renderBlend() {
-  const songs = getBlendSongs();
+async function renderBlend() {
+  const data = loadBlend();
+  const songs = data.songs || [];
   const blendList = document.getElementById('blend-list');
   const blendEmpty = document.getElementById('blend-empty');
+  const blendLoading = document.getElementById('blend-loading');
   const dateEl = document.getElementById('blend-date');
 
   if (dateEl) {
     const d = new Date();
     dateEl.textContent = d.toLocaleDateString('en-US', {
-      weekday: 'long',
-      month: 'long',
-      day: 'numeric',
+      weekday: 'long', month: 'long', day: 'numeric',
     }).toUpperCase();
   }
 
+  if (blendLoading) blendLoading.style.display = 'none';
   if (!blendList || !blendEmpty) return;
 
   if (songs.length === 0) {
@@ -368,53 +424,26 @@ function renderBlend() {
 
   blendEmpty.style.display = 'none';
 
-  // Get shuffled order
-  const data = loadBlend();
-  const ordered = data.shuffleSeed
-    ? seededShuffle(songs, data.shuffleSeed)
-    : getDailyOrder(songs);
-
-  blendList.innerHTML = ordered
-    .map((song, i) => {
-      const timeAgo = getTimeAgo(song.captured);
-      return `
-        <div class="blend-song">
-          <span class="blend-song-num">${i + 1}</span>
-          <span class="blend-song-badge ${song.source}">${song.source === 'spotify' ? 'SPOTIFY' : 'YOUTUBE'}</span>
-          <div class="blend-song-info">
-            <div class="blend-song-title">${escapeHtml(song.title)}</div>
-            <div class="blend-song-artist">${escapeHtml(song.artist)}</div>
-          </div>
-          <span class="blend-song-time">${timeAgo}</span>
-          <button class="blend-song-remove" data-id="${song.id}" title="Remove">&times;</button>
+  blendList.innerHTML = songs
+    .map((song, i) => `
+      <div class="blend-song" data-source="${song.source}" data-title="${escapeHtml(song.title)}">
+        <span class="blend-song-num">${i + 1}</span>
+        <span class="blend-song-badge ${song.source}">${song.source === 'spotify' ? 'SP' : 'YT'}</span>
+        <div class="blend-song-info">
+          <div class="blend-song-title">${escapeHtml(song.title)}</div>
+          <div class="blend-song-artist">${escapeHtml(song.artist)}</div>
         </div>
-      `;
-    })
+        <button class="blend-song-play" data-source="${song.source}">PLAY ></button>
+      </div>
+    `)
     .join('');
 
-  blendList.querySelectorAll('.blend-song-remove').forEach((btn) => {
+  // Click to switch to the song's service
+  blendList.querySelectorAll('.blend-song-play').forEach((btn) => {
     btn.addEventListener('click', () => {
-      removeSongFromBlend(btn.dataset.id);
+      switchService(btn.dataset.source);
     });
   });
-}
-
-function removeSongFromBlend(songId) {
-  const data = loadBlend();
-  data.songs = (data.songs || []).filter((s) => s.id !== songId);
-  saveBlend(data);
-  renderBlend();
-}
-
-function getTimeAgo(timestamp) {
-  const diff = Date.now() - timestamp;
-  const mins = Math.floor(diff / 60000);
-  if (mins < 1) return 'just now';
-  if (mins < 60) return `${mins}m ago`;
-  const hrs = Math.floor(mins / 60);
-  if (hrs < 24) return `${hrs}h ago`;
-  const days = Math.floor(hrs / 24);
-  return `${days}d ago`;
 }
 
 function escapeHtml(str) {
@@ -422,3 +451,128 @@ function escapeHtml(str) {
   div.textContent = str;
   return div.innerHTML;
 }
+
+// ============================================
+// Cookie Import for YouTube Music
+// ============================================
+
+const cookieModal = document.getElementById('cookie-modal');
+const cookieInput = document.getElementById('cookie-input');
+const cookieStatus = document.getElementById('cookie-status');
+
+function showCookieModal() {
+  cookieModal.classList.add('visible');
+  cookieInput.value = '';
+  cookieStatus.textContent = '';
+  cookieStatus.className = 'modal-status';
+  cookieInput.focus();
+}
+
+function hideCookieModal() {
+  cookieModal.classList.remove('visible');
+}
+
+document.getElementById('btn-yt-cookies')?.addEventListener('click', showCookieModal);
+document.getElementById('modal-close')?.addEventListener('click', hideCookieModal);
+document.getElementById('btn-cookie-cancel')?.addEventListener('click', hideCookieModal);
+
+// Close modal on overlay click
+cookieModal?.addEventListener('click', (e) => {
+  if (e.target === cookieModal) hideCookieModal();
+});
+
+// Close modal on Escape
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && cookieModal?.classList.contains('visible')) {
+    hideCookieModal();
+  }
+});
+
+function parseCookieData(raw) {
+  const trimmed = raw.trim();
+
+  // Try JSON array format (Cookie-Editor / EditThisCookie)
+  if (trimmed.startsWith('[')) {
+    const arr = JSON.parse(trimmed);
+    if (!Array.isArray(arr)) throw new Error('Expected a JSON array of cookies');
+    return arr.map((c) => ({
+      name: c.name,
+      value: c.value,
+      domain: c.domain,
+      path: c.path || '/',
+      secure: c.secure ?? true,
+      httpOnly: c.httpOnly ?? false,
+      expirationDate: c.expirationDate || c.expiry || 0,
+      sameSite: c.sameSite || 'no_restriction',
+    }));
+  }
+
+  // Try Netscape cookies.txt format
+  // Lines like: .youtube.com	TRUE	/	TRUE	1234567890	NAME	value
+  const lines = trimmed.split('\n').filter((l) => l.trim() && !l.startsWith('#'));
+  if (lines.length > 0 && lines[0].split('\t').length >= 7) {
+    return lines.map((line) => {
+      const parts = line.split('\t');
+      if (parts.length < 7) throw new Error(`Invalid cookies.txt line: ${line}`);
+      return {
+        domain: parts[0],
+        path: parts[2],
+        secure: parts[3].toUpperCase() === 'TRUE',
+        expirationDate: parseInt(parts[4], 10) || 0,
+        name: parts[5],
+        value: parts[6],
+        httpOnly: parts[1].toUpperCase() === 'TRUE',
+        sameSite: 'no_restriction',
+      };
+    });
+  }
+
+  throw new Error('Unrecognized format. Paste JSON from Cookie-Editor or cookies.txt format.');
+}
+
+document.getElementById('btn-cookie-import')?.addEventListener('click', async () => {
+  const raw = cookieInput.value;
+  if (!raw.trim()) {
+    cookieStatus.textContent = 'Please paste cookie data first.';
+    cookieStatus.className = 'modal-status error';
+    return;
+  }
+
+  let cookies;
+  try {
+    cookies = parseCookieData(raw);
+  } catch (err) {
+    cookieStatus.textContent = `Parse error: ${err.message}`;
+    cookieStatus.className = 'modal-status error';
+    return;
+  }
+
+  if (cookies.length === 0) {
+    cookieStatus.textContent = 'No cookies found in the pasted data.';
+    cookieStatus.className = 'modal-status error';
+    return;
+  }
+
+  cookieStatus.textContent = `Importing ${cookies.length} cookies...`;
+  cookieStatus.className = 'modal-status';
+
+  try {
+    const result = await window.electronAPI.importCookies('persist:youtube', cookies);
+    if (result.imported > 0) {
+      cookieStatus.textContent = `Imported ${result.imported} cookies. Reloading YouTube Music...`;
+      cookieStatus.className = 'modal-status success';
+
+      // Reload YouTube Music webview after a short delay
+      setTimeout(() => {
+        webviews.youtube?.reload();
+        hideCookieModal();
+      }, 1500);
+    } else {
+      cookieStatus.textContent = `Failed to import cookies. ${result.errors.length ? result.errors[0] : ''}`;
+      cookieStatus.className = 'modal-status error';
+    }
+  } catch (err) {
+    cookieStatus.textContent = `Import error: ${err.message}`;
+    cookieStatus.className = 'modal-status error';
+  }
+});

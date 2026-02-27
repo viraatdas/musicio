@@ -8,6 +8,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   onSwitchTab: (callback) => ipcRenderer.on('switch-tab', (_event, tab) => callback(tab)),
   onReloadWebview: (callback) => ipcRenderer.on('reload-webview', (_event, service) => callback(service)),
   openAuthWindow: (url, partition) => ipcRenderer.send('open-auth-window', url, partition),
+  importCookies: (partition, cookies) => ipcRenderer.invoke('import-cookies', { partition, cookies }),
   platform: process.platform,
   webviewPreloadPath: `file://${__dirname}/preload-webview.js`,
 });

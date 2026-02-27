@@ -1,6 +1,6 @@
 {
   "name": "musicio",
-  "version": "1.0.0",
+  "version": "0.0.5",
   "description": "Cyberpunk music desktop app - Spotify & YouTube Music in one place",
   "main": "main.js",
   "scripts": {

@@ -2,47 +2,27 @@ const {
   app,
   BrowserWindow,
   Menu,
+  shell,
   globalShortcut,
   ipcMain,
   session,
 } = require('electron');
 const path = require('path');
+const fs = require('fs');
 
 let mainWindow;
 
-const CHROME_VERSION = '131';
-const CHROME_USER_AGENT =
-  `Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${CHROME_VERSION}.0.0.0 Safari/537.36`;
-const CHROME_SEC_CH_UA =
-  `"Google Chrome";v="${CHROME_VERSION}", "Chromium";v="${CHROME_VERSION}", "Not_A Brand";v="24"`;
-
 // ============================================
-// Client Hints header spoofing
+// Minimal UA cleanup - MUST be before app.whenReady()
 // ============================================
-// Google detects Electron via Sec-CH-UA headers.
-// We override these on all requests from the YouTube session.
+// Instead of replacing the entire UA (which creates detectable inconsistencies),
+// just strip "Electron/x.x.x" and the app name from the default UA.
+// This preserves the real Chromium version and other natural fingerprints.
+const CLEAN_UA = app.userAgentFallback
+  .replace(/\s*Electron\/[\d.]+/, '')
+  .replace(/\s*musicio\/[\d.]+/i, '');
 
-function spoofClientHints(ses) {
-  ses.webRequest.onBeforeSendHeaders((details, callback) => {
-    const headers = { ...details.requestHeaders };
-
-    // Replace any Client Hints that reveal Electron
-    headers['Sec-CH-UA'] = CHROME_SEC_CH_UA;
-    headers['Sec-CH-UA-Mobile'] = '?0';
-    headers['Sec-CH-UA-Platform'] = '"macOS"';
-
-    // Remove the full version list if present (it may contain Electron)
-    if (headers['Sec-CH-UA-Full-Version-List']) {
-      headers['Sec-CH-UA-Full-Version-List'] =
-        `"Google Chrome";v="${CHROME_VERSION}.0.0.0", "Chromium";v="${CHROME_VERSION}.0.0.0", "Not_A Brand";v="24.0.0.0"`;
-    }
-
-    // Ensure User-Agent is always the Chrome one
-    headers['User-Agent'] = CHROME_USER_AGENT;
-
-    callback({ requestHeaders: headers });
-  });
-}
+app.userAgentFallback = CLEAN_UA;
 
 function createWindow() {
   mainWindow = new BrowserWindow({
@@ -64,103 +44,86 @@ function createWindow() {
 
   mainWindow.loadFile(path.join(__dirname, 'renderer', 'index.html'));
 
-  // Configure persistent sessions for each service
   const partitions = ['persist:spotify', 'persist:youtube'];
   for (const partition of partitions) {
     const ses = session.fromPartition(partition);
-    ses.setUserAgent(CHROME_USER_AGENT);
-
-    // Spoof Client Hints so Google doesn't detect Electron
-    spoofClientHints(ses);
-
-    // Allow DRM content (Widevine)
+    ses.setUserAgent(CLEAN_UA);
     ses.setPermissionRequestHandler((_webContents, permission, callback) => {
-      const allowed = [
-        'media',
-        'mediaKeySystem',
-        'notifications',
-        'fullscreen',
-        'pointerLock',
-      ];
+      const allowed = ['media', 'mediaKeySystem', 'notifications', 'fullscreen', 'pointerLock'];
       callback(allowed.includes(permission));
     });
   }
 }
 
 // ============================================
-// Application Menu with Cmd+1/2/3 shortcuts
+// Handle auth popups from webviews
+// ============================================
+
+app.on('web-contents-created', (_event, contents) => {
+  if (contents.getType() === 'webview') {
+    contents.setWindowOpenHandler(({ url }) => {
+      // Allow Spotify auth popups
+      if (
+        url.startsWith('https://accounts.spotify.com') ||
+        url.startsWith('https://open.spotify.com')
+      ) {
+        return { action: 'allow' };
+      }
+      // Google auth - allow in webview (don't redirect to external browser)
+      if (
+        url.startsWith('https://accounts.google.com') ||
+        url.startsWith('https://myaccount.google.com')
+      ) {
+        return { action: 'allow' };
+      }
+      return { action: 'deny' };
+    });
+  }
+});
+
+// ============================================
+// Application Menu
 // ============================================
 
 function buildAppMenu() {
   const isMac = process.platform === 'darwin';
   const template = [
     ...(isMac
-      ? [
-          {
-            label: app.name,
-            submenu: [
-              { role: 'about' },
-              { type: 'separator' },
-              { role: 'services' },
-              { type: 'separator' },
-              { role: 'hide' },
-              { role: 'hideOthers' },
-              { role: 'unhide' },
-              { type: 'separator' },
-              { role: 'quit' },
-            ],
-          },
-        ]
+      ? [{
+          label: app.name,
+          submenu: [
+            { role: 'about' }, { type: 'separator' }, { role: 'services' },
+            { type: 'separator' }, { role: 'hide' }, { role: 'hideOthers' },
+            { role: 'unhide' }, { type: 'separator' }, { role: 'quit' },
+          ],
+        }]
       : []),
     {
       label: 'Edit',
       submenu: [
-        { role: 'undo' },
-        { role: 'redo' },
-        { type: 'separator' },
-        { role: 'cut' },
-        { role: 'copy' },
-        { role: 'paste' },
-        { role: 'selectAll' },
+        { role: 'undo' }, { role: 'redo' }, { type: 'separator' },
+        { role: 'cut' }, { role: 'copy' }, { role: 'paste' }, { role: 'selectAll' },
       ],
     },
     {
       label: 'View',
       submenu: [
-        {
-          label: 'Spotify',
-          accelerator: 'CmdOrCtrl+1',
-          click: () => sendToRenderer('switch-tab', 'spotify'),
-        },
-        {
-          label: 'YouTube Music',
-          accelerator: 'CmdOrCtrl+2',
-          click: () => sendToRenderer('switch-tab', 'youtube'),
-        },
-        {
-          label: 'Daily Blend',
-          accelerator: 'CmdOrCtrl+3',
-          click: () => sendToRenderer('switch-tab', 'blend'),
-        },
+        { label: 'Spotify', accelerator: 'CmdOrCtrl+1', click: () => sendToRenderer('switch-tab', 'spotify') },
+        { label: 'YouTube Music', accelerator: 'CmdOrCtrl+2', click: () => sendToRenderer('switch-tab', 'youtube') },
+        { label: 'Daily Blend', accelerator: 'CmdOrCtrl+3', click: () => sendToRenderer('switch-tab', 'blend') },
         { type: 'separator' },
-        { role: 'reload' },
-        { role: 'toggleDevTools' },
-        { type: 'separator' },
-        { role: 'togglefullscreen' },
+        { role: 'reload' }, { role: 'toggleDevTools' },
+        { type: 'separator' }, { role: 'togglefullscreen' },
       ],
     },
     {
       label: 'Window',
       submenu: [
-        { role: 'minimize' },
-        { role: 'zoom' },
-        ...(isMac
-          ? [{ type: 'separator' }, { role: 'front' }]
-          : [{ role: 'close' }]),
+        { role: 'minimize' }, { role: 'zoom' },
+        ...(isMac ? [{ type: 'separator' }, { role: 'front' }] : [{ role: 'close' }]),
       ],
     },
   ];
-
   Menu.setApplicationMenu(Menu.buildFromTemplate(template));
 }
 
@@ -171,93 +134,58 @@ function sendToRenderer(channel, ...args) {
 }
 
 // ============================================
-// Google Auth Window (fixes YouTube sign-in)
-// ============================================
-
-function openAuthWindow(url, partitionName) {
-  const ses = session.fromPartition(partitionName);
-
-  const authWin = new BrowserWindow({
-    width: 500,
-    height: 750,
-    parent: mainWindow,
-    modal: false,
-    backgroundColor: '#fff',
-    webPreferences: {
-      session: ses,
-      preload: path.join(__dirname, 'preload-auth.js'),
-      nodeIntegration: false,
-      contextIsolation: false, // needed so preload patches land on the real window
-      sandbox: false,
-    },
-  });
-
-  authWin.loadURL(url, { userAgent: CHROME_USER_AGENT });
-
-  // Close the auth window when user finishes sign-in and is redirected back
-  const checkRedirect = (_event, navUrl) => {
-    if (
-      navUrl.startsWith('https://music.youtube.com') ||
-      navUrl.startsWith('https://www.youtube.com')
-    ) {
-      setTimeout(() => {
-        if (!authWin.isDestroyed()) authWin.close();
-        sendToRenderer('reload-webview', 'youtube');
-      }, 800);
-    }
-  };
-
-  authWin.webContents.on('will-navigate', checkRedirect);
-  authWin.webContents.on('will-redirect', checkRedirect);
-  authWin.webContents.on('did-redirect-navigation', checkRedirect);
-}
-
-// Intercept Google sign-in navigations from webviews
-app.on('web-contents-created', (_event, contents) => {
-  contents.on('will-navigate', (event, url) => {
-    if (
-      contents.getType() === 'webview' &&
-      url.startsWith('https://accounts.google.com')
-    ) {
-      event.preventDefault();
-      openAuthWindow(url, 'persist:youtube');
-    }
-  });
-
-  // Handle popups from webviews (e.g. OAuth flows)
-  if (contents.getType() === 'webview') {
-    contents.setWindowOpenHandler(({ url }) => {
-      if (url.startsWith('https://accounts.google.com')) {
-        openAuthWindow(url, 'persist:youtube');
-        return { action: 'deny' };
-      }
-      if (
-        url.startsWith('https://accounts.spotify.com') ||
-        url.startsWith('https://open.spotify.com')
-      ) {
-        return { action: 'allow' };
-      }
-      return { action: 'deny' };
-    });
-  }
-});
-
-// ============================================
 // IPC handlers
 // ============================================
 
 ipcMain.on('window-minimize', () => mainWindow?.minimize());
 ipcMain.on('window-maximize', () => {
-  if (mainWindow?.isMaximized()) {
-    mainWindow.unmaximize();
-  } else {
-    mainWindow?.maximize();
-  }
+  if (mainWindow?.isMaximized()) mainWindow.unmaximize();
+  else mainWindow?.maximize();
 });
 ipcMain.on('window-close', () => mainWindow?.close());
 
-ipcMain.on('open-auth-window', (_event, url, partition) => {
-  openAuthWindow(url, `persist:${partition}`);
+ipcMain.on('open-auth-window', (_event, url, _partition) => {
+  shell.openExternal(url);
+});
+
+// Import cookies into a webview session
+ipcMain.handle('import-cookies', async (_event, { partition, cookies }) => {
+  const ses = session.fromPartition(partition);
+  let imported = 0;
+  const errors = [];
+
+  for (const cookie of cookies) {
+    try {
+      // Build the URL from the cookie domain
+      const domain = cookie.domain.startsWith('.') ? cookie.domain.slice(1) : cookie.domain;
+      const protocol = cookie.secure ? 'https' : 'http';
+      const url = `${protocol}://${domain}${cookie.path || '/'}`;
+
+      const cookieDetails = {
+        url,
+        name: cookie.name,
+        value: cookie.value,
+        domain: cookie.domain,
+        path: cookie.path || '/',
+      };
+      if (cookie.secure !== undefined) cookieDetails.secure = cookie.secure;
+      if (cookie.httpOnly !== undefined) cookieDetails.httpOnly = cookie.httpOnly;
+      if (cookie.expirationDate && cookie.expirationDate > 0) {
+        cookieDetails.expirationDate = cookie.expirationDate;
+      }
+      if (cookie.sameSite) {
+        const siteMap = { no_restriction: 'no_restriction', lax: 'lax', strict: 'strict' };
+        cookieDetails.sameSite = siteMap[cookie.sameSite] || 'no_restriction';
+      }
+
+      await ses.cookies.set(cookieDetails);
+      imported++;
+    } catch (err) {
+      errors.push(`${cookie.name}: ${err.message}`);
+    }
+  }
+
+  return { imported, errors };
 });
 
 // ============================================
@@ -267,9 +195,7 @@ ipcMain.on('open-auth-window', (_event, url, partition) => {
 function registerMediaKeys() {
   const mediaKeys = ['MediaPlayPause', 'MediaNextTrack', 'MediaPreviousTrack'];
   for (const key of mediaKeys) {
-    globalShortcut.register(key, () => {
-      sendToRenderer('media-key', key);
-    });
+    globalShortcut.register(key, () => sendToRenderer('media-key', key));
   }
 }
 
@@ -277,11 +203,62 @@ function registerMediaKeys() {
 // App lifecycle
 // ============================================
 
-app.whenReady().then(() => {
+// ============================================
+// Auto-import pending cookies on startup
+// ============================================
+
+async function importPendingCookies() {
+  const cookieFile = path.join(__dirname, '.pending-cookies.json');
+  if (!fs.existsSync(cookieFile)) return;
+
+  try {
+    const raw = fs.readFileSync(cookieFile, 'utf-8');
+    const cookies = JSON.parse(raw);
+    const ses = session.fromPartition('persist:youtube');
+    let imported = 0;
+
+    for (const cookie of cookies) {
+      try {
+        const domain = cookie.domain.startsWith('.') ? cookie.domain.slice(1) : cookie.domain;
+        const protocol = cookie.secure ? 'https' : 'http';
+        const url = `${protocol}://${domain}${cookie.path || '/'}`;
+
+        const details = {
+          url,
+          name: cookie.name,
+          value: cookie.value,
+          domain: cookie.domain,
+          path: cookie.path || '/',
+        };
+        if (cookie.secure !== undefined) details.secure = cookie.secure;
+        if (cookie.httpOnly !== undefined) details.httpOnly = cookie.httpOnly;
+        if (cookie.expirationDate && cookie.expirationDate > 0) {
+          details.expirationDate = cookie.expirationDate;
+        }
+        if (cookie.sameSite) {
+          details.sameSite = cookie.sameSite;
+        }
+
+        await ses.cookies.set(details);
+        imported++;
+      } catch (err) {
+        console.error(`Cookie import failed for ${cookie.name}: ${err.message}`);
+      }
+    }
+
+    console.log(`Imported ${imported}/${cookies.length} YouTube cookies`);
+    // Delete the file after import
+    fs.unlinkSync(cookieFile);
+  } catch (err) {
+    console.error('Failed to import pending cookies:', err.message);
+  }
+}
+
+app.whenReady().then(async () => {
   buildAppMenu();
   createWindow();
+  await importPendingCookies();
   registerMediaKeys();
-
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
   });
