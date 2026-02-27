@@ -1,0 +1,47 @@
+{
+  "name": "musicio",
+  "version": "1.0.0",
+  "description": "Cyberpunk music desktop app - Spotify & YouTube Music in one place",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "dev": "electron . --enable-logging",
+    "build": "electron-builder --mac",
+    "build:dmg": "electron-builder --mac dmg"
+  },
+  "author": "viraatdas",
+  "license": "MIT",
+  "build": {
+    "appId": "com.musicio.app",
+    "productName": "Musicio",
+    "files": [
+      "main.js",
+      "preload.js",
+      "preload-webview.js",
+      "renderer/**/*",
+      "assets/**/*"
+    ],
+    "mac": {
+      "category": "public.app-category.music",
+      "icon": "assets/icon.png",
+      "target": [
+        {
+          "target": "dmg",
+          "arch": ["universal"]
+        }
+      ]
+    },
+    "dmg": {
+      "title": "Musicio",
+      "backgroundColor": "#0a0a0f",
+      "contents": [
+        { "x": 130, "y": 220 },
+        { "x": 410, "y": 220, "type": "link", "path": "/Applications" }
+      ]
+    }
+  },
+  "devDependencies": {
+    "electron": "^33.0.0",
+    "electron-builder": "^25.1.8"
+  }
+}
